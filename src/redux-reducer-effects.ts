@@ -37,41 +37,36 @@ const liftReducer = <Msg, S, Task>(reducer: EnhancedReducer<S, Task>, callback: 
     }
 }
 
-export interface Observable {
-    subscribe(fn?: any, error?: (err:any) => void, complete?: () => void): any;
+export interface Observable<T> {
+    subscribe(fn?: (a: T) => void, error?: (error: any) => void, complete?: () => void): any;
 }
 
-export interface Subject<T> extends Observable {
+export interface Subject<T> extends Observable<T> {
     next(t: T): void;
-    flatMap(...xs: any[]): any;
+    flatMap<R>(project: (value: T, index: number) => Observable<R>): Observable<R>;
 }
 
-export interface EnhanceOptions {
-    createSubject(): Subject<any>
-    taskRunner: TaskRunner,
+export type TaskRunner<Task, Msg> = (task$: Observable<Task>) => Observable<Msg>;
+
+export interface EnhanceOptions<Task, Msg> {
+    createSubject(): Subject<Task>
+    taskRunner: TaskRunner<Task, Msg>,
 };
 
-export type TaskRunner = <Task>(task$: Observable) => Observable;
-
-const enhance = (options: EnhanceOptions) => (originalCreateStore: StoreCreator) => {
+const enhance = <Task, Msg extends Action>(options: EnhanceOptions<Task, Msg>) => (originalCreateStore: StoreCreator) => {
     const { createSubject, taskRunner } = options;
-    return <S, Task>(reducer: EnhancedReducer<S, Task>, initialState: S, enhancer?: StoreEnhancer<S>) => {
+    return <S>(reducer: EnhancedReducer<S, Task>, initialState: S, enhancer?: StoreEnhancer<S>) => {
 
         // This subject represents a stream of cmds coming from
         // the reducer
         const subject = createSubject();
-        const liftedReducer = liftReducer(reducer, (t: Task) => 
-          subject.next(t)
-        );
+        const liftedReducer = liftReducer(reducer, task => subject.next(task));
 
         const store = originalCreateStore(liftedReducer, initialState, enhancer)
 
         // Close the loop by running the command and dispatching to the
         // store
-        taskRunner(subject)
-            .subscribe((action: any) => 
-              store.dispatch(action)
-            );
+        taskRunner(subject).subscribe(store.dispatch);
 
         return store;
     }

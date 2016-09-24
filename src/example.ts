@@ -1,5 +1,6 @@
 import enhance, {combineReducers, TaskRunner} from './redux-reducer-effects';
 import {createStore} from 'redux';
+import { Subject, Observable } from "@reactivex/rxjs";
 
 // Helpers
 const create = <T>(t: T): T => t;
@@ -73,25 +74,30 @@ const decodeGifUrl = (response: any): string => response.data.image_url;
 // Callbacks must be on Task because otherwise we don't know their type
 // Is result of Task compaitable with callback? We only know this if
 // they are coupled
-const myTaskRunner: TaskRunner<Action> = <X, A>(task: Task): Promise<Action> => {
-    switch (task.type) {
-        case 'GetRandomGif':
+const myTaskRunner: TaskRunner<Task, Action> = <X, A>(tasks$: Observable<Task>): Observable<Action> => {
+    return tasks$
+        .filter(task => task.type === 'GetRandomGif')
+        .switchMap(task => {
             const url = createGifUrl(task.topic);
-            return fetch(url)
-                .then(response => response.json())
-                .then(decodeGifUrl)
-                .then(createSuccess)
-                .catch(createFailure)
-                .then(result => (
+            return Observable.ajax({ url, crossDomain: true })
+                .map(decodeGifUrl)
+                .map(createSuccess)
+                .catch(error => Observable.of(createFailure(error)))
+                .map(result => (
                     result.success
                         ? task.onSuccess(result)
                         : task.onFail(result)
                 ))
-    }
-}
+        })
+};
 
-const enhancedCreateStore = enhance(createStore);
-const store = enhancedCreateStore(myTaskRunner, combineReducers<State, Task>({ main: reducer }), initialState);
+const enhancerStack = enhance({
+    createSubject: () => new Subject<Task>(),
+    taskRunner: myTaskRunner,
+});
+
+const enhancedCreateStore = enhancerStack(createStore);
+const store = enhancedCreateStore(combineReducers<State, Task>({ main: reducer }), initialState);
 
 const rootEl = document.getElementById('root');
 store.subscribe(() => {
